@@ -1,4 +1,7 @@
 using HTTP
+using CSV
+using JSON3
+using DataFrames
 
 function get_gaia_coords(gaia_id)
     query = """
