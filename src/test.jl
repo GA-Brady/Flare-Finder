@@ -1,4 +1,12 @@
 function hello_world()
-    print("Hello World!")
+    printstyled("Hello World!"; color=:red)
     # execute in terminal using julia --project=. -e "include(\"src/test.jl\"); hello_world()"
+end
+
+function main()
+    hello_world()
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    results = main()
 end
