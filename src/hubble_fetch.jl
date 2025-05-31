@@ -8,6 +8,80 @@ using DataFrames
 global const MAST_BASE_URL = "https://mast.stsci.edu/api/v0"
 global const CAOM_SEARCH_URL = "$MAST_BASE_URL/invoke"
 
+# Field definitions: (name, start, end, type)
+const FIELDS = [
+    ("Gaia", 1, 19, Int64),
+    ("SDSS", 21, 29, Int64),
+    ("Teff", 31, 34, Int64),
+    ("Fe_H", 36, 40, Float64),
+    ("Mg_H", 42, 46, Float64),
+    ("Al_H", 48, 52, Float64),
+    ("Si_H", 54, 58, Float64),
+    ("C_H", 60, 64, Float64),
+    ("O_H", 66, 70, Float64),
+    ("Ca_H", 72, 76, Float64),
+    ("Ti_H", 78, 82, Float64),
+    ("Cr_H", 84, 88, Float64),
+    ("N_H", 90, 94, Float64),
+    ("Ni_H", 96, 100, Float64),
+    ("Chi2", 102, 106, Int64),
+    ("TempAgree", 108, 112, String),
+    ("e_Teff", 114, 117, Float64),
+    ("e_Fe_H", 119, 122, Float64),
+    ("e_Mg_H", 124, 127, Float64),
+    ("e_Al_H", 129, 132, Float64),
+    ("e_Si_H", 134, 137, Float64),
+    ("e_C_H", 139, 142, Float64),
+    ("e_O_H", 144, 147, Float64),
+    ("e_Ca_H", 149, 152, Float64),
+    ("e_Ti_H", 154, 157, Float64),
+    ("e_Cr_H", 159, 162, Float64),
+    ("e_N_H", 164, 167, Float64),
+    ("e_Ni_H", 169, 172, Float64)
+]
+
+function parse_mrt(data::String)
+    lines = split(strip(data), '\n')
+    lines = filter(l -> !isempty(strip(l)), lines)
+    
+    # Initialize columns in order
+    columns = []
+    for (name, _, _, type) in FIELDS
+        if type == String
+            push!(columns, name => String[])
+        else
+            push!(columns, name => Union{type, Missing}[])
+        end
+    end
+    
+    # Parse each line
+    for line in lines
+        for (i, (name, start_pos, end_pos, type)) in enumerate(FIELDS)
+            if length(line) >= end_pos
+                raw = strip(line[start_pos:end_pos])
+                
+                if isempty(raw)
+                    push!(columns[i][2], missing)
+                else
+                    try
+                        if type == String
+                            push!(columns[i][2], raw)
+                        else
+                            push!(columns[i][2], parse(type, raw))
+                        end
+                    catch
+                        push!(columns[i][2], missing)
+                    end
+                end
+            else
+                push!(columns[i][2], missing)
+            end
+        end
+    end
+    
+    return DataFrame(columns)
+end
+
 function set_minmax(x::Float64, tol::Float64)
     min = x - tol
     max = x + tol
@@ -167,12 +241,15 @@ function GAIA_DR3_finder(ra::Float64, dec::Float64)
 end
 
 function Behmard_metallicity(df::DataFrame)
-    printstyled("Checking Behmard source list for match"; color=:yellow)
+    printstyled("Checking Behmard source list for match\n"; color=:yellow)
     sort!(df, [:score], rev=[true])
 
     for candidate in df.id
         found, _, metallicity_data = GAIA_exists_in_file("data/apjadaf1ft2_mrt.txt", candidate)
-        found ? (return metallicity_data) : nothing
+        if found
+            metallicity_df = parse_mrt(metallicity_data)
+            return metallicity_df
+        end
     end
 
     print("Metallicity data not found in Behmard")
@@ -225,9 +302,7 @@ function main()
     ra, dec = mast_name_lookup(test_mdwarf)
     # HST_count = HST_COS_count(ra, dec, .002) #.002 is MAST's default cross match value
     GAIA_list = GAIA_DR3_finder(ra, dec)
-    metallicity = Behmard_metallicity(GAIA_list)
-    print(metallicity)
-    
+    print(Behmard_metallicity(GAIA_list))
 end
 
 # Execute the search
