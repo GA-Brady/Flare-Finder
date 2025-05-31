@@ -19,6 +19,7 @@ function set_filters(parameters::Dict)
 end
 
 function mast_query(request::Dict)
+    haskey(request, "service") ? printstyled("using $(request["service"])\n"; color=:yellow) : nothing
     try
         headers = Dict("Content-type" => "application/x-www-form-urlencoded",
                     "Accept" => "text/plain")
@@ -28,16 +29,6 @@ function mast_query(request::Dict)
         if response.status == 200
             data = JSON3.read(response.body)
             return data
-            #=
-            if haskey(data, :data) && !isempty(data.data)
-                df = DataFrame(data.data)
-                println("Request contains $(nrow(df)) rows")
-                return df
-            else
-                println("Empty datafield")
-                return nothing
-            end
-            =#
         else
             printstyled("HTTP response failed with status $response.status \n"; color =:red)
             return nothing
@@ -49,7 +40,7 @@ function mast_query(request::Dict)
 end
 
 function HST_COS_search(ra, dec, tol)
-    print("Searching for HST spectra...")
+    print("Searching for HST spectra ")
 
     filts = set_filters(Dict( 
     "obs_collection" => ["HST"],
@@ -61,24 +52,182 @@ function HST_COS_search(ra, dec, tol)
     request = Dict("service" => "Mast.Caom.Filtered.Position",
                 "format"=>"json",
                 "params" => params)
+
     return mast_query(request)
 end
 
-function main()
+function HST_COS_count(ra, dec, tol)
+    print("Searching for HST spectra ")
 
-    test_mdwarf = "GJ 176"
-    println("Querying MAST for $test_mdwarf s...")
+    filts = set_filters(Dict( 
+    "obs_collection" => ["HST"],
+    "wavelength_region" => ["UV", "NUV", "FUV"],
+    "dataproduct_type" => ["spectrum"],
+    "instrument_name" => ["COS/FUV", "COS/NUV"]))
 
-    params = Dict("input" => test_mdwarf, "format"=>"json")
+    params = Dict("columns"=>"COUNT_BIG(*)", "filters"=> filts, "position"=>"$ra, $dec, $tol")
+    request = Dict("service" => "Mast.Caom.Filtered.Position",
+                "format"=>"json",
+                "params" => params)
+
+    response = mast_query(request)
+    counts = response.data[1].Column1
+    printstyled("$counts HST COS/NUV || COS/FUV observations found"; color=:green)
+    return counts
+end
+
+function SDSS_crossmatch(ra::Float64, dec::Float64, tol::Float64)
+    print("Querying MAST for SDSS cross-match using RA: $ra; DEC: $dec ")
+
+    crossmatch_input = Dict(
+        "fields" => [
+            Dict("name" => "ra", "type" => "float"),
+            Dict("name" => "dec", "type" => "float")
+        ],
+        "data" => [
+            Dict("ra" => ra, "dec" => dec)
+        ]
+    )
+    
+    request = Dict(
+        "service" => "Mast.Sdss.Crossmatch",
+        "data" => crossmatch_input,
+        "params" => Dict(
+            "raColumn" => "ra",
+            "decColumn" => "dec",
+            "radius" => tol
+        ),
+        "format" => "json",
+        "pagesize" => 1000,
+        "page" => 1
+    )
+
+    response = mast_query(request) 
+    return response
+end
+
+function GAIA_DR3_crossmatch(ra::Float64, dec::Float64, tol::Float64)
+    print("Querying MAST for GAIA DR3 cross-match using RA: $ra, DEC: $dec; TOL: $tol ")
+    
+    request = Dict(
+        "service" => "Mast.Catalogs.GaiaDR3.Cone",
+        "params" => Dict(
+            "ra" => ra,
+            "dec" => dec,
+            "radius" => tol
+        ),
+        "format" => "json",
+        "pagesize" => 1000,
+        "page" => 1
+    )
+
+    response = mast_query(request) 
+    return response
+end
+
+function GAIA_DR3_finder(ra::Float64, dec::Float64)
+    #=
+    Since RA & DEC measurements are not absolute, this function implores an iterative approach
+    to finding potential GAIA DR3 names from RA, DEC coordinates. 
+    =#
+    tol = .002 # base tolerance suggested by MAST
+    count = 0
+    JSON_data = []
+    
+    # looping until non-zero results returned
+    while count == 0
+        response = GAIA_DR3_crossmatch(ra, dec, tol)
+        JSON_data = response.data
+        count = length(JSON_data)
+        tol += .01
+    end
+
+    println("$(length(JSON_data)) potential cross-matches found within $(tol)ᵒ")
+    println("Attempting to minimize distance to RA: $ra, DEC: $dec")
+    println("")
+    candidate_list = DataFrame(id = Int64[], score = Float64[], ra = Float64[], ra_err = Float64[], dec=Float64[], dec_err = Float64[])
+
+    for candidate in JSON_data
+        s_id = candidate.source_id
+        
+        s_ra = candidate.ra
+        ra_err = candidate.ra_error
+
+        s_dec = candidate.dec
+        dec_err = candidate.dec_error
+
+        score = sqrt(((s_ra-ra)/ra_err)^2+((s_dec-dec)/dec_err)^2)
+        push!(candidate_list, [s_id, score, s_ra, ra_err, s_dec, dec_err])
+    end
+    sort!(candidate_list, [:score], rev=[true])
+    println(candidate_list)
+    println("")
+
+    return candidate_list
+end
+
+function Behmard_metallicity(df::DataFrame)
+    printstyled("Checking Behmard source list for match"; color=:yellow)
+    sort!(df, [:score], rev=[true])
+
+    for candidate in df.id
+        found, _, metallicity_data = GAIA_exists_in_file("data/apjadaf1ft2_mrt.txt", candidate)
+        found ? (return metallicity_data) : nothing
+    end
+
+    print("Metallicity data not found in Behmard")
+    return nothing
+end
+
+function GAIA_exists_in_file(filename::String, target_integer::Int)
+    open(filename, "r") do file
+        row_number = 1
+        while !eof(file)
+            line = readline(file)
+            
+            if length(line) >= 19
+                substring = line[1:19]
+                if occursin(string(target_integer), substring)
+                    printstyled("Metallicity data for GAIA ID:$target_integer in row $row_number\n"; color=:green)
+                    return (found=true, row_number=row_number, content=line)
+                end
+            end
+            row_number += 1
+        end
+        
+        println("Metallicity data for GAIA ID:$target_integer not found in file")
+        return (found=false, row_number=nothing, content=nothing)
+    end
+end
+
+function mast_name_lookup(target::String)
+    print("Querying MAST for $target ")
+
+    params = Dict("input" => target, "format"=>"json")
     resolver_request = Dict("service" => "Mast.Name.Lookup",
     "params" => params)
 
-    pos_data = mast_query(resolver_request).resolvedCoordinate[1]
-    target_ra = pos_data.ra; target_dec = pos_data.decl
+    pos_data = mast_query(resolver_request).resolvedCoordinate
 
-    printstyled("Target $test_mdwarf positioned at RA: $target_ra, DEC: $target_dec \n"; color=:green)
+    if isempty(pos_data)
+        printstyled("$target not found in MAST database. \n"; color=:red)
+        return missing, missing
+    else
+        coords = pos_data[1]
+        target_ra = coords.ra; target_dec = coords.decl
+        printstyled("$target found at RA: $target_ra; DEC: $target_dec \n"; color = :green)
+        return target_ra, target_dec
+    end
+end
 
-    println(HST_COS_search(target_ra, target_dec, .5))
+function main()
+    test_mdwarf = "GJ 176"
+    ra, dec = mast_name_lookup(test_mdwarf)
+    # HST_count = HST_COS_count(ra, dec, .002) #.002 is MAST's default cross match value
+    GAIA_list = GAIA_DR3_finder(ra, dec)
+    metallicity = Behmard_metallicity(GAIA_list)
+    print(metallicity)
+    
 end
 
 # Execute the search
