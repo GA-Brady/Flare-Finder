@@ -8,6 +8,9 @@ using DataFrames
 global const MAST_BASE_URL = "https://mast.stsci.edu/api/v0"
 global const CAOM_SEARCH_URL = "$MAST_BASE_URL/invoke"
 
+module HST
+
+export mast_query, HST_COS_count, HST_COS_search
 # Field definitions: (name, start, end, type)
 const FIELDS = [
     ("Gaia", 1, 19, Int64),
@@ -387,6 +390,7 @@ function append_target_data!(df::DataFrame, name::String, ra::Float64, dec::Floa
     push!(df, new_row)
 end
 
+end
 
 function main()
     viable_targets = create_empty_viable_targets_df()
@@ -414,7 +418,7 @@ function main()
 
     println(viable_targets)
 
-    output_file = "bin/viable_targets_with_metallicity.csv"
+    output_file = "data/viable_targets_with_metallicity.csv"
     CSV.write(output_file, viable_targets)
     println("Results saved to: $(output_file)")
 
