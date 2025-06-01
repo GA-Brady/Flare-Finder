@@ -79,7 +79,7 @@ function parse_mrt(data::String)
         end
     end
     
-    return DataFrame(columns)
+    return columns
 end
 
 function set_minmax(x::Float64, tol::Float64)
@@ -292,8 +292,8 @@ function Behmard_metallicity(df::Union{DataFrame, Nothing})
     for candidate in df.id
         found, _, metallicity_data = GAIA_exists_in_file("data/apjadaf1ft2_mrt.txt", candidate)
         if found
-            metallicity_df = parse_mrt(metallicity_data)
-            return true, nothing, metallicity_df
+            metallicity_cols = parse_mrt(metallicity_data)
+            return true, nothing, metallicity_cols
         end
     end
 
@@ -342,12 +342,82 @@ function mast_name_lookup(target::AbstractString)
     end
 end
 
+function create_empty_viable_targets_df()
+    # Create base columns
+    base_columns = [
+        :Name => String[],
+        :RA => Float64[],
+        :Dec => Float64[]
+    ]
+    
+    # Add metallicity columns
+    metallicity_columns = []
+    for (name, _, _, type) in FIELDS
+        if type == String
+            push!(metallicity_columns, Symbol(name) => String[])
+        else
+            push!(metallicity_columns, Symbol(name) => Union{type, Missing}[])
+        end
+    end
+    
+    # Combine all columns
+    all_columns = vcat(base_columns, metallicity_columns)
+    
+    return DataFrame(all_columns)
+end
+
+function append_target_data!(df::DataFrame, name::String, ra::Float64, dec::Float64, metallicity_cols)
+    # Create new row data
+    new_row = Dict{Symbol, Any}()
+    new_row[:Name] = name
+    new_row[:RA] = ra
+    new_row[:Dec] = dec
+    
+    # Add metallicity data
+    for (col_name, col_data) in metallicity_cols
+        # Take first value if multiple entries, or missing if empty
+        if !isempty(col_data)
+            new_row[Symbol(col_name)] = col_data[1]
+        else
+            new_row[Symbol(col_name)] = missing
+        end
+    end
+    
+    # Append to DataFrame
+    push!(df, new_row)
+end
+
+
 function main()
+    viable_targets = create_empty_viable_targets_df()
     target_list = CSV.read("data/target_list.csv", DataFrame).Target
-    count = 0
-    target = target_list[3]
-    ra, dec = mast_name_lookup(target)
-    GAIA_list = GAIA_DR3_finder(ra, dec)
+    total_targets = length(target_list)
+
+    for (i, t) in enumerate(target_list)
+        printstyled("Target $i/$total_targets \n"; color =:cyan)
+
+        try
+            target = String(t)
+            ra, dec = mast_name_lookup(target)
+            GAIA_list = GAIA_DR3_finder(ra, dec)
+            found, _, cols = Behmard_metallicity(GAIA_list)
+
+            if found
+                append_target_data!(viable_targets, target, ra, dec, cols)
+            end
+
+        catch e
+            printstyled("Error processing target $i/$total_targets: $e \n"; color=:red)
+        end
+        
+    end
+
+    println(viable_targets)
+
+    output_file = "bin/viable_targets_with_metallicity.csv"
+    CSV.write(output_file, viable_targets)
+    println("Results saved to: $(output_file)")
+
 end
 
 # Execute the search
