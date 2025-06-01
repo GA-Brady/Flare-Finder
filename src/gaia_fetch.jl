@@ -1,7 +1,12 @@
 using HTTP
-using CSV
 using JSON3
 using DataFrames
+using CSV
+using Tables
+using DataFrames
+
+global const MAST_BASE_URL = "https://mast.stsci.edu/api/v0"
+global const CAOM_SEARCH_URL = "$MAST_BASE_URL/invoke"
 
 function get_gaia_coords(gaia_id)
     query = """
@@ -14,9 +19,13 @@ function get_gaia_coords(gaia_id)
         "Content-Type" => "application/x-www-form-urlencoded"
     ], "REQUEST=doQuery&LANG=ADQL&FORMAT=csv&QUERY=$(replace(query, '\n' => " "))")
 
-    df = CSV.read(IOBuffer(response.body), DataFrame)
-    isempty(df) && return nothing
-    return df[!, [:ra, :dec]][1, :]
+    return response.body
 end
 
-get_gaia_coords(421503353090268416)
+function main()
+    print(get_gaia_coords([421503353090268416, 421535342004177920]))
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    results = main()
+end

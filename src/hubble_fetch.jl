@@ -181,13 +181,24 @@ function SDSS_crossmatch(ra::Float64, dec::Float64, tol::Float64)
 end
 
 function GAIA_DR3_crossmatch(ra::Float64, dec::Float64, tol::Float64)
-    print("Querying MAST for GAIA DR3 cross-match using RA: $ra, DEC: $dec; TOL: $tol ")
+    print("Querying MAST for GAIA cross-match using RA: $ra; DEC: $dec ")
+
+    crossmatch_input = Dict(
+        "fields" => [
+            Dict("name" => "ra", "type" => "float"),
+            Dict("name" => "dec", "type" => "float")
+        ],
+        "data" => [
+            Dict("ra" => ra, "dec" => dec)
+        ]
+    )
     
     request = Dict(
-        "service" => "Mast.Catalogs.GaiaDR3.Cone",
+        "service" => "Mast.GaiaDR3.Crossmatch",
+        "data" => crossmatch_input,
         "params" => Dict(
-            "ra" => ra,
-            "dec" => dec,
+            "raColumn" => "ra",
+            "decColumn" => "dec",
             "radius" => tol
         ),
         "format" => "json",
@@ -213,7 +224,7 @@ function GAIA_DR3_finder(ra::Union{Float64, Nothing}, dec::Union{Float64,Nothing
         dec_missing ? (printstyled("Dec missing\n"; color=:red); return nothing) : nothing
     end
     
-    tol = .002 # base tolerance suggested by MAST
+    tol = .05
     count = 0
     JSON_data = []
     max_iterations = 10
@@ -227,7 +238,7 @@ function GAIA_DR3_finder(ra::Union{Float64, Nothing}, dec::Union{Float64,Nothing
             JSON_data = response.data
             count = length(JSON_data)
 
-            tol += .01
+            tol += .1
             iteration += 1
         else
             printstyled("MAST Query failed"; color=:red)
@@ -246,15 +257,15 @@ function GAIA_DR3_finder(ra::Union{Float64, Nothing}, dec::Union{Float64,Nothing
     candidate_list = DataFrame(id = Int64[], score = Float64[], ra = Float64[], ra_err = Float64[], dec=Float64[], dec_err = Float64[])
 
     for candidate in JSON_data
-        s_id = candidate.source_id
+        s_id = candidate.MatchID
         
-        s_ra = candidate.ra
+        s_ra = candidate.MatchRA
         ra_err = candidate.ra_error
 
-        s_dec = candidate.dec
+        s_dec = candidate.MatchDEC
         dec_err = candidate.dec_error
         
-        if !(ra_err <= 0 || dec_err <= 0)
+        if !(ra_err == 0 || dec_err == 0)
             score = sqrt(abs(((s_ra-ra)/ra_err)^2+((s_dec-dec)/dec_err)^2))
         else 
             score = 0
@@ -282,12 +293,12 @@ function Behmard_metallicity(df::Union{DataFrame, Nothing})
         found, _, metallicity_data = GAIA_exists_in_file("data/apjadaf1ft2_mrt.txt", candidate)
         if found
             metallicity_df = parse_mrt(metallicity_data)
-            return metallicity_df
+            return true, nothing, metallicity_df
         end
     end
 
     printstyled("Metallicity data not found in Behmard\n"; color =:red)
-    return nothing
+    return false, nothing, nothing
 end
 
 function GAIA_exists_in_file(filename::String, target_integer::Int)
@@ -334,18 +345,9 @@ end
 function main()
     target_list = CSV.read("data/target_list.csv", DataFrame).Target
     count = 0
-
-    for target in target_list
-        ra, dec = mast_name_lookup(target)
-        # HST_count = HST_COS_count(ra, dec, .002) #.002 is MAST's default cross match value
-        GAIA_list = GAIA_DR3_finder(ra, dec)
-        metallicity_df = Behmard_metallicity(GAIA_list)
-        if !isnothing(metallicity_df)
-            count += 1
-        end
-    end
-
-    print("Number of Viable Targets: $count")
+    target = target_list[3]
+    ra, dec = mast_name_lookup(target)
+    GAIA_list = GAIA_DR3_finder(ra, dec)
 end
 
 # Execute the search
