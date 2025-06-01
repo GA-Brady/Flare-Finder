@@ -199,21 +199,45 @@ function GAIA_DR3_crossmatch(ra::Float64, dec::Float64, tol::Float64)
     return response
 end
 
-function GAIA_DR3_finder(ra::Float64, dec::Float64)
+function GAIA_DR3_finder(ra::Union{Float64, Nothing}, dec::Union{Float64,Nothing})
     #=
     Since RA & DEC measurements are not absolute, this function implores an iterative approach
     to finding potential GAIA DR3 names from RA, DEC coordinates. 
     =#
+    ra_missing = isnothing(ra)
+    dec_missing = isnothing(dec)
+
+    if ra_missing || dec_missing
+        (ra_missing && dec_missing) ? (printstyled("RA and Dec missing\n"; color=:red); return nothing) : nothing
+        ra_missing ? (printstyled("RA missing\n"; color=:red); return nothing) : nothing
+        dec_missing ? (printstyled("Dec missing\n"; color=:red); return nothing) : nothing
+    end
+    
     tol = .002 # base tolerance suggested by MAST
     count = 0
     JSON_data = []
+    max_iterations = 10
+    iteration = 0
     
     # looping until non-zero results returned
-    while count == 0
+    while count == 0 && iteration < max_iterations
         response = GAIA_DR3_crossmatch(ra, dec, tol)
-        JSON_data = response.data
-        count = length(JSON_data)
-        tol += .01
+        
+        if !isnothing(response) 
+            JSON_data = response.data
+            count = length(JSON_data)
+
+            tol += .01
+            iteration += 1
+        else
+            printstyled("MAST Query failed"; color=:red)
+            iteration += 1
+        end
+    end
+
+    if iteration >= max_iterations
+        printstyled("Maximum iterations exceeded without finding matches\n"; color =:red)
+        return nothing
     end
 
     println("$(length(JSON_data)) potential cross-matches found within $(tol)ᵒ")
@@ -229,8 +253,13 @@ function GAIA_DR3_finder(ra::Float64, dec::Float64)
 
         s_dec = candidate.dec
         dec_err = candidate.dec_error
+        
+        if !(ra_err <= 0 || dec_err <= 0)
+            score = sqrt(abs(((s_ra-ra)/ra_err)^2+((s_dec-dec)/dec_err)^2))
+        else 
+            score = 0
+        end
 
-        score = sqrt(((s_ra-ra)/ra_err)^2+((s_dec-dec)/dec_err)^2)
         push!(candidate_list, [s_id, score, s_ra, ra_err, s_dec, dec_err])
     end
     sort!(candidate_list, [:score], rev=[true])
@@ -240,7 +269,12 @@ function GAIA_DR3_finder(ra::Float64, dec::Float64)
     return candidate_list
 end
 
-function Behmard_metallicity(df::DataFrame)
+function Behmard_metallicity(df::Union{DataFrame, Nothing})
+    if isnothing(df)
+        printstyled("Candidate DataFrame missing\n"; color=:red)
+        return nothing
+    end
+
     printstyled("Checking Behmard source list for match\n"; color=:yellow)
     sort!(df, [:score], rev=[true])
 
@@ -252,7 +286,7 @@ function Behmard_metallicity(df::DataFrame)
         end
     end
 
-    print("Metallicity data not found in Behmard")
+    printstyled("Metallicity data not found in Behmard\n"; color =:red)
     return nothing
 end
 
@@ -277,7 +311,7 @@ function GAIA_exists_in_file(filename::String, target_integer::Int)
     end
 end
 
-function mast_name_lookup(target::String)
+function mast_name_lookup(target::AbstractString)
     print("Querying MAST for $target ")
 
     params = Dict("input" => target, "format"=>"json")
@@ -288,7 +322,7 @@ function mast_name_lookup(target::String)
 
     if isempty(pos_data)
         printstyled("$target not found in MAST database. \n"; color=:red)
-        return missing, missing
+        return nothing, nothing
     else
         coords = pos_data[1]
         target_ra = coords.ra; target_dec = coords.decl
@@ -298,15 +332,23 @@ function mast_name_lookup(target::String)
 end
 
 function main()
-    test_mdwarf = "GJ 176"
-    ra, dec = mast_name_lookup(test_mdwarf)
-    # HST_count = HST_COS_count(ra, dec, .002) #.002 is MAST's default cross match value
-    GAIA_list = GAIA_DR3_finder(ra, dec)
-    print(Behmard_metallicity(GAIA_list))
+    target_list = CSV.read("data/target_list.csv", DataFrame).Target
+    count = 0
+
+    for target in target_list
+        ra, dec = mast_name_lookup(target)
+        # HST_count = HST_COS_count(ra, dec, .002) #.002 is MAST's default cross match value
+        GAIA_list = GAIA_DR3_finder(ra, dec)
+        metallicity_df = Behmard_metallicity(GAIA_list)
+        if !isnothing(metallicity_df)
+            count += 1
+        end
+    end
+
+    print("Number of Viable Targets: $count")
 end
 
 # Execute the search
 if abspath(PROGRAM_FILE) == @__FILE__
     results = main()
 end
-
