@@ -1,21 +1,22 @@
+module Queries
+
 using HTTP
 using JSON3
 using DataFrames
 using CSV
 using Tables
 using DataFrames
+using FITSIO
 
 global const MAST_BASE_URL = "https://mast.stsci.edu/api/v0"
 global const CAOM_SEARCH_URL = "$MAST_BASE_URL/invoke"
 
-module HST
-
-export mast_query, HST_COS_count, HST_COS_search
+export mast_query, HST_COS_count, HST_COS_search, download_request, get_CAOM_products
 # Field definitions: (name, start, end, type)
 const FIELDS = [
     ("Gaia", 1, 19, Int64),
     ("SDSS", 21, 29, Int64),
-    ("Teff", 31, 34, Int64),
+    ("Teff", 30, 34, Int64),
     ("Fe_H", 36, 40, Float64),
     ("Mg_H", 42, 46, Float64),
     ("Al_H", 48, 52, Float64),
@@ -390,9 +391,8 @@ function append_target_data!(df::DataFrame, name::String, ra::Float64, dec::Floa
     push!(df, new_row)
 end
 
-end
-
-function main()
+function get_target_list()
+    # function which returns viable targets from the Melbourne list
     viable_targets = create_empty_viable_targets_df()
     target_list = CSV.read("data/target_list.csv", DataFrame).Target
     total_targets = length(target_list)
@@ -421,10 +421,26 @@ function main()
     output_file = "data/viable_targets_with_metallicity.csv"
     CSV.write(output_file, viable_targets)
     println("Results saved to: $(output_file)")
-
 end
 
-# Execute the search
-if abspath(PROGRAM_FILE) == @__FILE__
-    results = main()
+function download_request(request, filename, download_type="file")
+    printstyled("Getting data products \n"; color=:yellow)
+    request_url="https://mast.stsci.edu/api/v0/Download/" * download_type
+    response = HTTP.post(request_url, headers=["Content-Type" => "application/json"],
+    body=request)
+
+    #=
+    FITS(filename, "w") do f
+        write(f, response)
+    end
+    =#
+    return response
+end
+
+function get_CAOM_products(obsid::Integer)
+    request = Dict("service" => "Mast.Caom.Products",
+    "params" => Dict("obsid"=>obsid), "format" => "json")
+
+    return mast_query(request)
+end
 end
