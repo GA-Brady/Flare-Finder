@@ -6,6 +6,8 @@ using HTTP
 using JSON3
 using Tar
 using CodecZlib
+using FITSIO
+using Plots
 
 function download_files_lister()
     results = HST_COS_search(70.7323959199788, 18.9581655408456, .02)
@@ -57,7 +59,7 @@ function working_targz_download()
     download_request(data, download_path, "bundle$extension")
 end
 
-function main()
+function untarzipper()
     # Open the tar.gz file as a stream
     io = GzipDecompressorStream(open("test.tar.gz", "r"))
 
@@ -66,6 +68,19 @@ function main()
 
     # Close the stream
     close(io)
+end
+
+function main()
+    f = FITS("/Users/ga-brady/Repos/MHD-flares/code/output/MAST_2025-06-09T1515/HST/lc2601hsq/lc2601hsq_x1d.fits")
+    data = DataFrame(f[2])
+    print(names(data))
+
+    wvln_A = data[!, "WAVELENGTH"][1]
+    flux_A = data[!, "FLUX"][1]
+
+    p1 = plot(wvln_A, flux_A)
+    savefig(p1, "figures/test.png")
+
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

@@ -425,14 +425,23 @@ end
 
 function download_request(request, filepath, download_type="file")
     printstyled("Getting data products \n"; color=:yellow)
-    request_url="https://mast.stsci.edu/api/v0.1/Download/" * download_type
-    response = HTTP.post(request_url, ["Content-Type" => "application/json"], body=request)
+    try
+        request_url="https://mast.stsci.edu/api/v0.1/Download/" * download_type
+        response = HTTP.post(request_url, ["Content-Type" => "application/json"], body=request)
 
-    open(filepath, "w") do file
-        write(file, response.body)
+        if response.status == 200
+            println("Download successfully executed")
+            open(filepath, "w") do file
+                write(file, response.body)
+            end
+        else
+            printstyled("Download failed. Server response $(response.status) \n"; color=:red)
+        end
+
+        return response
+    catch e
+        printstyled("Error: $e encountered attempting to download products \n"; color=:red)
     end
-
-    return response
 end
 
 function get_CAOM_products(obsid::Integer)
