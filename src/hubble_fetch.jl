@@ -423,17 +423,15 @@ function get_target_list()
     println("Results saved to: $(output_file)")
 end
 
-function download_request(request, filename, download_type="file")
+function download_request(request, filepath, download_type="file")
     printstyled("Getting data products \n"; color=:yellow)
-    request_url="https://mast.stsci.edu/api/v0/Download/" * download_type
-    response = HTTP.post(request_url, headers=["Content-Type" => "application/json"],
-    body=request)
+    request_url="https://mast.stsci.edu/api/v0.1/Download/" * download_type
+    response = HTTP.post(request_url, ["Content-Type" => "application/json"], body=request)
 
-    #=
-    FITS(filename, "w") do f
-        write(f, response)
+    open(filepath, "w") do file
+        write(file, response.body)
     end
-    =#
+
     return response
 end
 
