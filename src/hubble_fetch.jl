@@ -1,17 +1,20 @@
 module Queries
 
-using HTTP
-using JSON3
-using DataFrames
 using CSV
-using Tables
 using DataFrames
 using FITSIO
+using HTTP
+using JSON3
+using Tables
+using Tar
+using CodecZlib
+using FITSIO
+using Logging
+
+export mast_query, HST_COS_count, HST_COS_search, download_request, get_CAOM_products, obsid_lister, target_bundler, targz_download
 
 global const MAST_BASE_URL = "https://mast.stsci.edu/api/v0"
 global const CAOM_SEARCH_URL = "$MAST_BASE_URL/invoke"
-
-export mast_query, HST_COS_count, HST_COS_search, download_request, get_CAOM_products
 # Field definitions: (name, start, end, type)
 const FIELDS = [
     ("Gaia", 1, 19, Int64),
@@ -43,6 +46,29 @@ const FIELDS = [
     ("e_N_H", 164, 167, Float64),
     ("e_Ni_H", 169, 172, Float64)
 ]
+
+struct APIResult{T}
+    success::Bool
+    data::Union{T, Nothing}
+    error_type::Symbol
+    message::String
+    should_retry::Bool
+    retry_after::Union{Integer, Nothing} # seconds
+end
+
+#=
+function handle_api_response(response::HTTP.Response, expected_type::Type=Any)
+    status = response.status
+
+    if 200 <= status <= 299
+        try
+            data = JSON3.read(response.body, expected_type)
+
+        catch
+        end
+    end
+end
+=#
 
 function parse_mrt(data::String)
     lines = split(strip(data), '\n')
@@ -87,6 +113,7 @@ function parse_mrt(data::String)
 end
 
 function set_minmax(x::Float64, tol::Float64)
+    tol = abs(tol)
     min = x - tol
     max = x + tol
     return min, max
@@ -450,4 +477,95 @@ function get_CAOM_products(obsid::Integer)
 
     return mast_query(request)
 end
+
+# directly copied from main.jl which provide basic funcitonality
+function obsid_lister(ra::Union{Float64, Integer}, dec::Union{Float64, Integer}, tol::Union{Float64, Integer})
+    results = HST_COS_search(ra, dec, tol)["data"]
+
+    obs_list = []
+    num_rows = length(results)
+
+    if isempty(results)
+        return nothing
+    end
+
+    for i in 1:num_rows
+        row = results[i]
+        obsid = row["obsid"]
+        push!(obs_list, obsid)
+    end
+
+    return obs_list
+end
+
+function target_bundler(obsid::Integer)
+    # Function overloader to make sure that they correct type is passed
+    return target_bundle_downloader([obsid], download_path)
+end
+
+function target_bundler(obsid_list::Vector{Any})
+    println("Getting CAOM products")
+    
+    required_products = "CORRTAG_A CORRTAG_B X1DSUM" # required data products for Splittag
+    product_URLs = []
+    count = 0
+
+    for obsid in obsid_list
+        result = get_CAOM_products(obsid).data
+        
+        for available_product in result
+            raw_desc = available_product["productSubGroupDescription"]
+            desc = !isnothing(raw_desc) ? String(raw_desc) : "Shkeebert Ruiz"
+            
+            if occursin(desc, required_products)
+                url = available_product["dataURI"]
+                push!(product_URLs, url)
+                count += 1
+            end
+        end
+
+    end
+    println("Found $count observations")
+    return product_URLs
+end
+
+function targz_download(uri::String, download_path::String)
+    # targz_download overloader for type checking
+    return targz_download([uri], download_path)
+end
+
+function targz_download(uri_list::Vector{Any}, download_path::String)
+    println("Downloading uris")
+    payload = JSON3.write(uri_list)
+    download_request(payload, download_path, "bundle.tar.gz")
+end
+
+function working_targz_download()    
+    form_data = []
+
+    # Or even more explicit:
+    for uri in uri_list
+        push!(form_data, uri)
+    end
+
+    data = JSON3.write(form_data)
+    println("Data: $data")
+
+    file_name = "test" # would be the observation ID or something in actual implementation
+    extension = ".tar.gz"
+    download_path = "$file_name$extension"
+    download_request(data, download_path, "bundle$extension")
+end
+
+function untarzipper()
+    # Open the tar.gz file as a stream
+    io = GzipDecompressorStream(open("test.tar.gz", "r"))
+
+    # Extract the archive to a directory named "output"
+    Tar.extract(io, "output")
+
+    # Close the stream
+    close(io)
+end
+
 end
