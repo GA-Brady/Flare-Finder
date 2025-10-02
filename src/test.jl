@@ -5,7 +5,6 @@ end
 
 function main()
     hello_world()
-    print(contains("CORRTAG_ACORRTAG_B", "CORRTAG_B"))
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

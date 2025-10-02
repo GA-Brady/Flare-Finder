@@ -500,7 +500,7 @@ end
 
 function target_bundler(obsid::Integer)
     # Function overloader to make sure that they correct type is passed
-    return target_bundle_downloader([obsid], download_path)
+    return target_bundler([obsid], download_path)
 end
 
 function target_bundler(obsid_list::Vector{Any})

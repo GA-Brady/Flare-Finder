@@ -21,7 +21,7 @@ function main()
     p1 = plot(wvln_A, flux_A)
     savefig(p1, "figures/test.png")
     =#
-
+    
     obsids = obsid_lister(70.7323959199788, 18.9581655408456, .02)
     urls = target_bundler(obsids)
     targz_download(urls, "temp/test.tar.gz")
